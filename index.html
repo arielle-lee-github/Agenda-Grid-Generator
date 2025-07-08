@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agenda Grid Generator</title>
+    <!-- Add SheetJS library for Excel functionality -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -101,13 +103,17 @@
             flex-wrap: wrap;
         }
 
-        /* New styles for the bottom button group */
+        .top-actions {
+            justify-content: space-between;
+            align-items: center;
+        }
+
         .output-actions {
             justify-content: space-between;
             align-items: center;
         }
 
-        .output-actions .right-buttons {
+        .output-actions .left-buttons, .output-actions .right-buttons {
             display: flex;
             gap: 10px;
         }
@@ -545,7 +551,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>Agenda Grid Generator</h1>
+            <h1>Agenda Grid</h1>
             <p>Create professional grid-based conference schedules showing concurrent sessions</p>
         </div>
         <div class="content">
@@ -571,8 +577,10 @@
                         <input type="text" id="newSpeakerInput" placeholder="e.g., Dr. Sarah Chen" onkeypress="handleAddSessionEnter(event)">
                     </div>
                 </div>
-                <div class="btn-group">
+                <div class="btn-group top-actions">
                     <button class="btn btn-primary" onclick="addSession()">Add Session to Grid</button>
+                    <input type="file" id="excelUpload" onchange="loadFromExcel(event)" accept=".xlsx, .xls" style="display: none;">
+                    <label for="excelUpload" class="btn btn-secondary">Load from Excel</label>
                 </div>
             </div>
             <div class="output-section">
@@ -583,7 +591,10 @@
                     </table>
                 </div>
                 <div class="btn-group output-actions">
-                    <button class="btn btn-success" onclick="copyGrid()">Copy Grid for PowerPoint</button>
+                    <div class="left-buttons">
+                        <button class="btn btn-success" onclick="copyGrid()">Copy Grid for PowerPoint</button>
+                        <button class="btn btn-success" onclick="downloadAsExcel()">Download as Excel</button>
+                    </div>
                     <div class="right-buttons">
                         <button class="btn btn-secondary" onclick="loadSampleData()">Load Sample Data</button>
                         <button class="btn btn-secondary" onclick="clearAll()">Clear All</button>
@@ -941,6 +952,98 @@
         function deleteSession(timeSlot, location) {
             delete sessions[`${timeSlot}|${location}`];
             generateGrid();
+        }
+        
+        function loadFromExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet);
+
+                    if (json.length === 0) {
+                        alert("The selected Excel sheet is empty.");
+                        return;
+                    }
+                    
+                    clearAll();
+                    
+                    json.forEach(row => {
+                        const timeKey = Object.keys(row).find(k => k.toLowerCase() === 'time slot');
+                        const locKey = Object.keys(row).find(k => k.toLowerCase() === 'location');
+                        const titleKey = Object.keys(row).find(k => k.toLowerCase() === 'session title');
+                        const speakerKey = Object.keys(row).find(k => k.toLowerCase() === 'speaker');
+
+                        if (row[timeKey] && row[locKey] && row[titleKey]) {
+                            const time = String(row[timeKey]).trim();
+                            const location = String(row[locKey]).trim();
+                            const title = String(row[titleKey]).trim();
+                            const speaker = row[speakerKey] ? String(row[speakerKey]).trim() : '';
+
+                            if (!timeSlots.includes(time)) timeSlots.push(time);
+                            if (!locations.includes(location)) locations.push(location);
+                            updateSession(time, location, title, speaker);
+                        }
+                    });
+
+                    generateGrid();
+                    alert("Data loaded successfully!");
+
+                } catch (error) {
+                    console.error("Error processing Excel file:", error);
+                    alert("Could not process the Excel file. Please ensure it is a valid .xlsx or .xls file and the first sheet contains the data with columns 'Time Slot', 'Location', and 'Session Title'.");
+                } finally {
+                    event.target.value = null;
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function downloadAsExcel() {
+            if (Object.keys(sessions).length === 0) {
+                alert("There is no data to download.");
+                return;
+            }
+            
+            // Create a flat list of sessions for export
+            const dataForExcel = [];
+            dataForExcel.push(['Time Slot', 'Location', 'Session Title', 'Speaker']); // Add headers
+            
+            // Get all sessions and sort them
+            const sortedSessionKeys = Object.keys(sessions).sort((a, b) => {
+                const [timeA, locA] = a.split('|');
+                const [timeB, locB] = b.split('|');
+                const timeCompare = parseTime(timeA) - parseTime(timeB);
+                if (timeCompare !== 0) return timeCompare;
+                return locA.localeCompare(locB); // Sort by location if times are the same
+            });
+
+            sortedSessionKeys.forEach(key => {
+                const [time, location] = key.split('|');
+                const session = sessions[key];
+                dataForExcel.push([
+                    time,
+                    location,
+                    session.title || '',
+                    session.speaker || ''
+                ]);
+            });
+
+            const worksheet = XLSX.utils.aoa_to_sheet(dataForExcel);
+            
+            // Set column widths for better readability
+            worksheet['!cols'] = [{ wch: 25 }, { wch: 25 }, { wch: 40 }, { wch: 25 }];
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Agenda');
+
+            XLSX.writeFile(workbook, 'Conference_Agenda_List.xlsx');
         }
 
         function copyGrid() {
