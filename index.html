@@ -180,8 +180,8 @@
         }
 
         #agendaGrid th {
-            background: #000054;
-            color: white;
+            background: #fac800;
+            color: #000054;
             padding: 12px 8px;
             text-align: center;
             font-weight: 600;
@@ -210,7 +210,7 @@
         }
 
         #agendaGrid td:first-child {
-            background: #e9ecef;
+            background: #fef3c0;
             font-weight: 600;
             color: #000054;
             cursor: grab;
@@ -224,7 +224,7 @@
         .header-input {
             background: transparent;
             border: none;
-            color: white;
+            color: #000054;
             font-weight: 600;
             font-size: 0.9rem;
             text-align: center;
@@ -235,7 +235,7 @@
         }
 
         .header-input:focus {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.08);
             border-radius: 3px;
         }
 
@@ -453,8 +453,8 @@
         }
 
         .powerpoint-table th {
-            background-color: #000054;
-            color: white;
+            background-color: #fac800;
+            color: #000054;
             border: 2px solid white;
             padding: 10px 8px;
             text-align: center;
@@ -486,7 +486,7 @@
         }
 
         .powerpoint-table td:first-child {
-            background-color: #e9ecef;
+            background-color: #fef3c0;
             font-weight: bold;
             color: #000054;
         }
@@ -529,6 +529,15 @@
             line-height: 1.6;
         }
 
+        .block-cell {
+            background: #fff8d6;
+            text-align: center;
+            vertical-align: middle;
+            font-weight: 500;
+            font-size: 1rem;
+            color: #000054;
+        }
+
         @media (max-width: 768px) {
             .add-session-grid {
                 grid-template-columns: 1fr;
@@ -564,8 +573,8 @@
                         <datalist id="timeSlotDatalist"></datalist>
                     </div>
                     <div class="input-group">
-                        <label for="newLocationInput">Location</label>
-                        <input type="text" id="newLocationInput" list="locationDatalist" placeholder="e.g., Main Auditorium">
+                        <label for="newLocationInput">Team / Location</label>
+                        <input type="text" id="newLocationInput" list="locationDatalist" placeholder="e.g., LX Team or Main Auditorium">
                         <datalist id="locationDatalist"></datalist>
                     </div>
                     <div class="input-group">
@@ -674,19 +683,34 @@
         function parseTime(timeStr) {
             try {
                 const startTimeStr = timeStr.split('-')[0].trim();
-                const match = startTimeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)/i);
-                if (!match) return timeStr;
+                const match = startTimeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i);
+                if (!match || !match[1]) return timeStr;
 
                 let hours = parseInt(match[1], 10);
                 const minutes = match[2] ? parseInt(match[2], 10) : 0;
-                const modifier = match[3].toUpperCase();
+                const modifier = match[3] ? match[3].toUpperCase() : null;
 
-                if (modifier === 'PM' && hours !== 12) hours += 12;
-                if (modifier === 'AM' && hours === 12) hours = 0;
+                if (modifier) {
+                    if (modifier === 'PM' && hours !== 12) hours += 12;
+                    if (modifier === 'AM' && hours === 12) hours = 0;
+                } else {
+                    // No AM/PM — assume 7:00 AM to 6:00 PM window:
+                    // hours 1–6 are afternoon (PM), hours 7–12 are morning/noon
+                    if (hours >= 1 && hours <= 6) hours += 12;
+                }
+
                 return hours * 60 + minutes;
             } catch (e) {
                 return timeStr;
             }
+        }
+
+        const BLOCK_KEYWORDS = ['lunch', 'tea', 'drinks', 'networking'];
+
+        function isBlockSession(title) {
+            if (!title) return false;
+            const lower = title.toLowerCase();
+            return BLOCK_KEYWORDS.some(kw => lower.includes(kw));
         }
 
         function generateGrid() {
@@ -734,7 +758,18 @@
             });
             header.appendChild(headerRow);
 
-            displayLocations.forEach((location) => {
+            const blockTimeSlots = new Set();
+            displayTimeSlots.forEach(timeSlot => {
+                for (const loc of displayLocations) {
+                    const sd = sessions[`${timeSlot}|${loc}`];
+                    if (sd && isBlockSession(sd.title)) {
+                        blockTimeSlots.add(timeSlot);
+                        break;
+                    }
+                }
+            });
+
+            displayLocations.forEach((location, locationIndex) => {
                 const row = document.createElement('tr');
                 row.draggable = true;
                 row.dataset.location = location;
@@ -761,6 +796,22 @@
                 row.appendChild(locationCell);
 
                 displayTimeSlots.forEach(timeSlot => {
+                    if (blockTimeSlots.has(timeSlot)) {
+                        if (locationIndex === 0) {
+                            let blockTitle = '';
+                            for (const loc of displayLocations) {
+                                const sd = sessions[`${timeSlot}|${loc}`];
+                                if (sd && isBlockSession(sd.title)) { blockTitle = sd.title; break; }
+                            }
+                            const cell = document.createElement('td');
+                            cell.className = 'editable-cell block-cell';
+                            cell.rowSpan = displayLocations.length;
+                            cell.textContent = blockTitle;
+                            row.appendChild(cell);
+                        }
+                        return;
+                    }
+
                     const sessionKey = `${timeSlot}|${location}`;
                     const sessionData = sessions[sessionKey] || {
                         title: '',
@@ -1105,13 +1156,43 @@
             thead.appendChild(headerRow);
             table.appendChild(thead);
 
+            const blockTimeSlotsPPT = new Set();
+            displayTimeSlots.forEach(timeSlot => {
+                for (const loc of displayLocations) {
+                    const sd = sessions[`${timeSlot}|${loc}`];
+                    if (sd && isBlockSession(sd.title)) {
+                        blockTimeSlotsPPT.add(timeSlot);
+                        break;
+                    }
+                }
+            });
+
             const tbody = document.createElement('tbody');
-            displayLocations.forEach(location => {
+            displayLocations.forEach((location, locationIndex) => {
                 const row = document.createElement('tr');
                 const locationCell = document.createElement('td');
                 locationCell.textContent = location;
                 row.appendChild(locationCell);
                 displayTimeSlots.forEach(timeSlot => {
+                    if (blockTimeSlotsPPT.has(timeSlot)) {
+                        if (locationIndex === 0) {
+                            let blockTitle = '';
+                            for (const loc of displayLocations) {
+                                const sd = sessions[`${timeSlot}|${loc}`];
+                                if (sd && isBlockSession(sd.title)) { blockTitle = sd.title; break; }
+                            }
+                            const cell = document.createElement('td');
+                            cell.rowSpan = displayLocations.length;
+                            cell.textContent = blockTitle;
+                            cell.style.backgroundColor = '#fff8d6';
+                            cell.style.textAlign = 'center';
+                            cell.style.verticalAlign = 'middle';
+                            cell.style.fontWeight = '500';
+                            cell.style.color = '#000054';
+                            row.appendChild(cell);
+                        }
+                        return;
+                    }
                     const sessionKey = `${timeSlot}|${location}`;
                     const sessionData = sessions[sessionKey] || {};
                     const cell = document.createElement('td');
